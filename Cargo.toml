@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Pay an invoice that requires a different Liquid asset than you hold, by routing through a swap-provider node (two hash-linked payments, no core changes)"
-homepage = "https://github.com/ElementsProject/lightning/tree/master/plugins"
-repository = "https://github.com/ElementsProject/lightning"
-rust-version.workspace = true
+homepage = "https://github.com/liquid-lightning/swap-plugin"
+repository = "https://github.com/liquid-lightning/swap-plugin"
+rust-version = "1.85.0"
 
 [[bin]]
 name = "assetswap-plugin"
@@ -22,5 +22,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 
-cln-plugin = { workspace = true }
-cln-rpc = { workspace = true }
+cln-plugin = "0.7"
+cln-rpc = "0.7"
+
+# A repository of its own, not a member of the CLN workspace (also when a
+# build copies it under a CLN checkout).  To build against a CLN checkout's
+# crates instead of the published ones:
+#   cargo build --config 'patch.crates-io.cln-plugin.path="/path/to/lightning/plugins"' \
+#               --config 'patch.crates-io.cln-rpc.path="/path/to/lightning/cln-rpc"'
+[workspace]

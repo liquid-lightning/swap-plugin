@@ -27,7 +27,7 @@
 
 use crate::assetinvoice::checked_wrapper;
 use crate::cltv::{block_seconds, payer_leg1_final_cltv};
-use crate::protocol::{encode_swap_metadata, fetch_price_tiers, SwapMetadata};
+use crate::protocol::{encode_swap_metadata, fetch_price_tiers, leg2_maxfee, SwapMetadata};
 use crate::rpc::{asset_layers, getroutes_path_to_sendpay_route, new_rpc, param, rpc_path};
 use crate::State;
 use anyhow::{anyhow, Error};
@@ -49,6 +49,18 @@ use std::str::FromStr;
 const PROVIDER_SAFETY_BLOCKS: u32 = 18;
 const PROVIDER_MIN_HOP_BUDGET: u32 = 34;
 
+/// What the provider prices leg 1 on (`htlc.rs`): leg 2's amount plus the
+/// routing-fee budget it allows leg 2, taken as this node's own
+/// `assetswap-leg2-maxfee-*` (the defaults, unless set as the provider's).
+/// Pricing the invoice's amount alone gives tiers the provider refuses:
+/// its floor is its low tier on this cost.
+fn leg2_cost(p: &Plugin<State>, amount_msat: u64) -> Result<u64, Error> {
+    let cfg = &p.state().config;
+    leg2_maxfee(amount_msat, cfg.leg2_maxfee_base_msat, cfg.leg2_maxfee_ppm)
+        .and_then(|fee| amount_msat.checked_add(fee))
+        .ok_or_else(|| anyhow!("{amount_msat} msat plus leg 2's fee budget doesn't fit in a u64"))
+}
+
 /// Ask this node's own `pricetiers-plugin` what paying `assetinvoice` would
 /// cost, for display purposes. This is NOT a quote from the swap provider
 /// -- it only returns real numbers if this node happens to carry the same
@@ -64,7 +76,8 @@ pub(crate) async fn quoteassetinvoice(p: Plugin<State>, args: Value) -> Result<V
         .ok_or_else(|| anyhow!("Missing assetinvoice"))?;
     let mut rpc = new_rpc(&p).await?;
     let wrapper = checked_wrapper(&mut rpc, encoded).await?;
-    let priced = fetch_price_tiers(&mut rpc, &wrapper.asset, wrapper.amount_msat).await?;
+    let cost_msat = leg2_cost(&p, wrapper.amount_msat)?;
+    let priced = fetch_price_tiers(&mut rpc, &wrapper.asset, cost_msat).await?;
     Ok(json!(priced))
 }
 
@@ -159,7 +172,7 @@ pub(crate) async fn payassetinvoice(p: Plugin<State>, args: Value) -> Result<Val
     let (from_asset, from_amount_msat) = match (from_asset, from_amount_override) {
         (Some(a), Some(m)) => (a, m),
         (Some(a), None) => {
-            let priced = fetch_price_tiers(&mut rpc, &wrapper.asset, wrapper.amount_msat)
+            let priced = fetch_price_tiers(&mut rpc, &wrapper.asset, leg2_cost(&p, wrapper.amount_msat)?)
                 .await
                 .map_err(|e| anyhow!("can't price paying in {a}: {e}"))?;
             if priced.from_asset != a {
@@ -176,7 +189,7 @@ pub(crate) async fn payassetinvoice(p: Plugin<State>, args: Value) -> Result<Val
             (priced.from_asset, tier.from_amount_msat)
         }
         (None, _) => {
-            let priced = fetch_price_tiers(&mut rpc, &wrapper.asset, wrapper.amount_msat)
+            let priced = fetch_price_tiers(&mut rpc, &wrapper.asset, leg2_cost(&p, wrapper.amount_msat)?)
                 .await
                 .map_err(|e| anyhow!("direct payment failed; can't price a swap locally: {e}"))?;
             let tier = priced
@@ -269,6 +282,15 @@ pub(crate) async fn payassetinvoice(p: Plugin<State>, args: Value) -> Result<Val
             timeout: None,
             payment_hash: Sha256::from_str(&wrapper.payment_hash)?,
         })
-        .await?;
+        .await
+        .map_err(|e| {
+            // The provider's failure never says which check failed (htlc.rs).
+            anyhow!(
+                "swap through provider {provider} failed: it refused or couldn't complete leg 1 of \
+                 {from_amount_msat} msat in {from_asset} ({e}). It accepts a leg 1 only at or above its own low \
+                 tier for the invoice's amount plus its leg-2 fee budget, and fails it if it can't pay leg 2; \
+                 its log says which"
+            )
+        })?;
     Ok(json!(res))
 }

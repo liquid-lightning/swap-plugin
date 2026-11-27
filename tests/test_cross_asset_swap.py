@@ -24,8 +24,11 @@ MARGINS = {'low': 2010, 'medium': 2030, 'high': 2060}  # pricetiers-plugin's own
 
 def tier_from_amount(to_amount_msat, tier_name, rate_ppm=DEFAULT_RATE_PPM,
                      fee_base_msat=DEFAULT_FEE_BASE_MSAT):
+    # Priced as the provider does (htlc.rs): on leg 2's amount plus its
+    # fee budget (assetswap-leg2-maxfee-*'s defaults, 5000 msat + 5000 ppm).
+    cost_msat = to_amount_msat + 5000 + to_amount_msat * 5000 // 1_000_000
     tier_rate_ppm = rate_ppm * MARGINS[tier_name] // 1000
-    return to_amount_msat * tier_rate_ppm // 1_000_000 + fee_base_msat
+    return cost_msat * tier_rate_ppm // 1_000_000 + fee_base_msat
 
 
 def test_cross_asset_swap_happy_path(node_factory, bitcoind):

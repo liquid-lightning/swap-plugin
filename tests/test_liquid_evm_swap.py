@@ -43,7 +43,10 @@ MARGINS = {'low': 2010, 'medium': 2030, 'high': 2060}  # pricetiers-plugin's
 
 
 def tier_msat(to_msat, tier='medium', rate_ppm=1_000_000, fee_base_msat=0):
-    return to_msat * (rate_ppm * MARGINS[tier] // 1000) // 1_000_000 + fee_base_msat
+    # Priced as the provider does (htlc.rs): on leg 2's amount plus its
+    # fee budget (assetswap-leg2-maxfee-*'s defaults, 5000 msat + 5000 ppm).
+    cost_msat = to_msat + 5000 + to_msat * 5000 // 1_000_000
+    return cost_msat * (rate_ppm * MARGINS[tier] // 1000) // 1_000_000 + fee_base_msat
 
 
 class RegtestEvmNode(EvmNode):

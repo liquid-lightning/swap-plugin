@@ -481,12 +481,20 @@ pub(crate) async fn on_htlc_accepted(p: Plugin<State>, v: Value) -> Result<Value
     };
     let priced = match fetch_price_tiers(&mut rpc, &meta.to_asset, cost_msat).await {
         Ok(p) => p,
-        Err(_) => return Ok(fail_incorrect_details()), // not a pair we quote
+        Err(e) => {
+            log::info!("assetswap: {payment_hash}: can't price leg 2 in {}: {e}: refused", meta.to_asset);
+            return Ok(fail_incorrect_details()); // not a pair we quote
+        }
     };
     let Some(floor_msat) = priced.tiers.iter().map(|t| t.from_amount_msat).min() else {
         return Ok(fail_incorrect_details());
     };
     if amount_msat < floor_msat {
+        log::info!(
+            "assetswap: {payment_hash}: leg 1 pays {amount_msat} msat of {}, below our low tier of {floor_msat} \
+             msat for leg 2's {to_amount_msat} msat plus its fee budget of {maxfee_msat} msat: refused",
+            priced.from_asset
+        );
         return Ok(fail_incorrect_details()); // we'd lose money at our own current price
     }
 
